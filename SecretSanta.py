@@ -4,10 +4,10 @@ import yaml
 
 options = {}
 
-with open('secretSanta.yaml', 'r') as file:
+with open('SecretSanta.yaml', 'r') as file:
     contents = yaml.safe_load(file)
-    if 'singles' in contents:
-        for person in contents['singles']:
+    if 'individuals' in contents:
+        for person in contents['individuals']:
             options[person] = ''
     if 'couples' in contents:
         for couple in contents['couples']:
