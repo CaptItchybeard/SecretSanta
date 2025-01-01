@@ -1,107 +1,93 @@
 import argparse
 import json
 import os
-from random import shuffle, randrange
+import random
+import sys
 import yaml
 
 class NaughtyList(Exception): pass
 
+__OUTPUT_PATH_DEFAULT='results'
+__MAX_RETRIES_DEFAULT=10
+
 class SantaHat:
-    def __init__(self, filename:str):
-        self.individuals = []
-        self.groups = {}
-        self.matches = {}
+    def __init__(self, filename:str, max_retries:int=__MAX_RETRIES_DEFAULT):
+        self.people:list[tuple[str,str]] = []
+        self.matches:dict[str:str] = {}
+        self.max_retries:int = max_retries
 
         print(f'Loading configuration from {filename}...', end='')
         with open(filename, 'r') as f:
             if filename.endswith(('.yaml', '.yml')):
-                yaml_obj = yaml.safe_load(f)
-                self.individuals = yaml_obj['individuals']
-                groups = yaml_obj['groups']
-                for group in groups:
-                    self.groups[group] = list(groups[group])
+                cfg_obj = yaml.safe_load(f)
             elif filename.endswith('.json'):
-                json_obj = json.load(f)
-                self.individuals = json_obj['individuals']
-                for group in json_obj['groups']:
-                    self.groups[group] = list(json_obj['groups'][group])
+                cfg_obj = json.load(f)
             else:
                 print('Naughty')
                 raise NaughtyList('ERROR: Unsupported file type')
+        for person in cfg_obj['individuals']:
+            self.people.append((person, ''))
+        for group in cfg_obj['groups']:
+            for person in cfg_obj['groups'][group]:
+                self.people.append((person, group))
         print('Nice')
+
+    def __str__(self)->str:
+        return f'people: {self.people}'
 
     def pick_all(self):
-        print('Filling hat...', end='')
-        hat = self.individuals[:]
-        for group in self.groups:
-            hat += self.groups[group]
-        pickers = hat[:]
-        shuffle(pickers)
-        print('Nice')
-
         print('Commencing picking ritual')
-        self.matches = {}
-        for santa in pickers:
-            print(f'{santa} is picking...', end='')
-            if ((len(hat) == 1 and santa == hat[0]) or
-                self.__in_same_group(hat + [santa])):
-                print('Naughty')
-                raise NaughtyList('ERROR: Unable to complete matching with remaining options in hat')
-            while True:
-                shuffle(hat)
-                choice = hat[0]
-                if (not self.__in_same_group([santa, choice]) and
-                    santa != choice):
-                    break
-            self.matches[santa] = choice
-            hat.pop(0)
-            print('Nice')
-        print('Ritual complete')
-    
-    def __str__(self)->str:
-        return '\n'.join([
-            f'indivs: {self.individuals}',
-            f'groups: {self.groups}'
-        ])
-
-    def __in_same_group(self, people:list[str])->bool:
-        # Return False if no groups are defined
-        if not self.groups:
-            return False
         
-        # For each group, check if all options in people are in same group
-        for group in self.groups:
-            if set(people).issubset(self.groups[group]):
-                return True
-        return False
+        # Initialize variables
+        hat = self.people[:]
+        pickers = hat[:]
 
-    def dump_matches(self, path:str=''):
+        # Retry loop
+        for retry in range(self.max_retries):
+            self.matches = {}
+            random.shuffle(hat)
+            random.shuffle(pickers)
+            try:
+                for i in range(len(pickers)):
+                    if pickers[i][1] and pickers[i][1] == hat[i][1]:
+                        # Both options are in same group
+                        raise NaughtyList()
+                    elif not pickers[i][1] and not hat[i][1] and pickers[i][0] == pickers[i][0]:
+                        # Both options are same individual
+                        raise NaughtyList()
+                    # Assign match
+                    self.matches[f'{pickers[i][0]} {pickers[i][1]}'] = f'{hat[i][0]} {hat[i][1]}'
+            except NaughtyList:
+                if retry+1 == self.max_retries:
+                    print(f'ERROR: max_retries({self.max_retries}) met with no successful matches')
+                    sys.exit(1)
+                continue
+        print('Ritual complete')
+
+    def dump_matches(self, path:str=__OUTPUT_PATH_DEFAULT):
         if not self.matches:
             raise NaughtyList('No matches to dump')
         
         print(f'Dumping match files to {path}...', end='')
-        if not path:
-            path = os.getcwd()
-        elif not os.path.isdir(path):
+        if not os.path.isdir(path):
             os.mkdir(path)
         
         for match in self.matches:
-            with open(os.path.join(path, f'{match}.txt'), 'w') as f:
+            with open(os.path.join(path, f'{match.strip()}.txt'), 'w') as f:
                 lines = [
-                    f'Dear [{match}],',
+                    f'Dear [{match.strip()}],',
                     f'Please be a good Secret Santa for [{self.matches[match]}].',
                     '    Warmest Regards,',
-                    '    Actual Santa',
-                    ' '*randrange(10, 100)
+                    '    Actual Santa'
                 ]
                 f.write('\n'.join(lines))
         print('Nice')
 
-def main(input_config:str, output_path:str=''):
+def main(input_config:str, output_path:str=__OUTPUT_PATH_DEFAULT, max_retries:int=__MAX_RETRIES_DEFAULT):
     if not os.path.isfile(input_config):
         raise NaughtyList(f'{input_config} does not exist')
     
-    hat = SantaHat(input_config)
+    hat = SantaHat(filename=input_config, max_retries=max_retries)
     hat.pick_all()
     hat.dump_matches(output_path)
 
@@ -116,11 +102,18 @@ if __name__ == '__main__':
         help='Config file including individual and group names (.yaml and .json supported)'
     )
     parser.add_argument(
+        '-r',
+        '--retries',
+        type=int,
+        default=__MAX_RETRIES_DEFAULT,
+        help='Max number of retries defined for picking ritual, Default=10'
+    )
+    parser.add_argument(
         '-o',
         '--output-path',
         type=str,
-        help='Path to dump match txt files'
+        default=__OUTPUT_PATH_DEFAULT,
+        help='Path to dump match txt files, Default="results"'
     )
     args = parser.parse_args()
-    print(args.config_file)
-    main(args.config_file, args.output_path)
+    main(input_config=args.config_file, output_path=args.output_path, max_retries=args.retries)
